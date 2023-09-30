@@ -1,0 +1,1 @@
+from pwiki.wiki import Wiki
