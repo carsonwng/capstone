@@ -10,4 +10,4 @@ Secondary Goal: Successfully identify whether the given food is a soup, salad, o
 3. ./core-functions
    1. torch, transformers, matplotlib
 4. ./data-collection
-   1. pwiki, python-dotenv
+   1. ~~pwiki~~ *pywikibot*, python-dotenv
