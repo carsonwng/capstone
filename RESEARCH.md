@@ -16,3 +16,6 @@ Python3 -> Optimization -> Multiprocessing
 https://www.digitalocean.com/community/tutorials/python-multiprocessing-example
 --
 https://stackoverflow.com/questions/14429703/when-to-call-join-on-a-process
+
+Python3 -> Compression -> Tar Archives
+https://stackoverflow.com/questions/2032403/how-to-create-full-compressed-tar-file-using-python
