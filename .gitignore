@@ -1,0 +1,9 @@
+/data
+
+/data-collection/__pycache__
+/data-collection/apicache-py3
+/data-collection/throttle.ctrl
+/data-collection/test.py
+
+*.env
+!sample.env
