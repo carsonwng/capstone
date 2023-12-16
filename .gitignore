@@ -5,6 +5,9 @@
 /data-collection/throttle.ctrl
 /data-collection/test.py
 
+/data-collection/common-crawl/filtered
+/data-collection/common-crawl/tmp
+
 /filtered
 /tmp
 
