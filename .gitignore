@@ -5,5 +5,15 @@
 /data-collection/throttle.ctrl
 /data-collection/test.py
 
+/data-collection/common-crawl/filtered
+/data-collection/common-crawl/tmp
+
+/filtered
+/tmp
+
+/sentence-processing
+/data-collection/common-crawl/__pycache__
+
+
 *.env
 !sample.env
