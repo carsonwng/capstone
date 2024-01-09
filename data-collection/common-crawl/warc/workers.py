@@ -10,6 +10,7 @@ from multiprocessing.queues import Queue
 from multiprocessing.managers import ValueProxy
 
 from uworkers import range_generator, parse_warc
+from warc.warc_utils import request_warc
 
 def _start_node(
         log_name: str = "",
@@ -17,7 +18,7 @@ def _start_node(
         queue: Queue = None,
         dir_o: str = "",
         i: int = 0,
-        instances: int = 0,
+        # instances: int = 0,
         ticker: int = 1,
         chunk_size: int = 1024,
         lock: Lock = None,
@@ -46,22 +47,22 @@ def _start_node(
     db = mongo_client["cc_capstone"]
     col_warc = db["warc_index"]
 
-    log.info(f"Starting node {i} of {instances} workers in PID {os.getpid()}...")
+    log.info(f"Starting worker {i} in PID {os.getpid()}...")
 
     try:
-        loop.run_until_complete(asyncio.gather(*(_warc_worker(
+        loop.run_until_complete(asyncio.gather(_warc_worker(
             log=log,
             col_warc=col_warc,
             queue=queue,
             dir_o=dir_o,
             i=i,
-            j=j,
+            # j=j,
             ticker=ticker,
             chunk_size=chunk_size,
             lock=lock,
             killswitch=killswitch,
             warc_count=warc_count
-        ) for j in range(instances))))
+        )))
     finally:
         loop.close()
 
@@ -92,7 +93,7 @@ async def _warc_worker(
 
         dir_o: str = "",
         i: int = 0,
-        j: int = 0,
+        # j: int = 0,
 
         ticker: int = 1,
         chunk_size: int = 1024,
@@ -108,9 +109,9 @@ async def _warc_worker(
 
     aio_session = aiohttp.ClientSession()
 
-    log.info(f"Starting Warc Worker {j}... in node {i} with pid: {os.getpid()}")
+    log.info(f"Starting Warc Worker {i} with pid: {os.getpid()}")
 
-    worker_id = f"{i}-{j} (PID: {os.getpid()})"
+    worker_id = f"{i} (PID: {os.getpid()})"
 
     try:
         while True:
@@ -131,71 +132,109 @@ async def _warc_worker(
             if not url or not byte_ranges:
                 continue
 
-            byte_ranges_only = [b_range["range"] for b_range in byte_ranges]
-
             retry_flag = True
-            updated_count = 0
 
             while retry_flag:
-                try:
-                    async with aio_session.get(url, headers={ "Range": f"bytes={', '.join(byte_ranges_only)}" }, raise_for_status=True) as stream:
-                        boundary = "--".encode() + stream.headers["Content-Type"].split("boundary=")[1].encode("utf-8")
+                updated_count = 0
 
-                        range_gen = range_generator(byte_ranges)
-                        file = open(f"{dir_o}/{next(range_gen)['filename']}.warc.gz", "wb")
+                try:
+                    warc_ranges = ", ".join([b_range["range"] for b_range in byte_ranges])
+                    
+                    async with aio_session.get(url, headers={ "Range": f"bytes={warc_ranges}" }, raise_for_status=True) as stream:
+                        boundary = "--".encode() + stream.headers["Content-Type"].split("boundary=")[1].encode("utf-8")
+                        flag = 5
+
+                        with open(f"{dir_o}/TEMP-{url.split('/warc/', 1)[1]}", "wb") as file:
+                            async for chunk in stream.content.iter_any():
+                                file.write(chunk)
+                            
+                        with open(f"{dir_o}/TEMP-{url.split('/warc/', 1)[1]}", "rb") as file, open(f"{dir_o}/{url.split('/warc/', 1)[1]}", "wb") as file_o:
+                            for line in file:
+                                if flag > 0:
+                                    flag -= 1
+                                    continue
+
+                                if line.startswith(boundary):
+                                    flag = 3
+                                    
+                                    file_o.seek(file_o.tell() - len(b"\r\n"))
+                                    
+                                    updated_count += 1
+                                    continue
+                                
+                                file_o.write(line)
+                            
+                            file_o.seek(file_o.tell() - len(b"\r\n"))
+                            file_o.truncate()
                         
+                        # log.info(f"Done writing file. ({dir_o}/{url.split('/warc/', 1)[1]})")
+                        log.info(updated_count)
+                        schemas = parse_warc(f"{dir_o}/{url.split('/warc/', 1)[1]}")
+                        log.info(schemas)
+                        
+                        # if schemas:
+                        #     for schema in schemas:
+
                         retry_flag = False
 
-                        async for chunk in stream.content.iter_chunked(chunk_size):
-                            buffer = chunk
-
-                            try:
-                                while boundary in buffer:
-                                    range_end, buffer = buffer.split(boundary, 1)
-
-                                    try:
-                                        new_range = buffer.split(b"\r\n\r\n", 1)[1]
-                                    
-                                    except:
-                                        new_range = buffer
-                                    
-                                    filename = file.name
-
-                                    file.write(range_end)
-                                    file.close()
-
-                                    try:
-                                        schema = parse_warc(filename)
-                                    except:
-                                        schema = None
-                                        log.error(f"Error parsing {filename}")
-
-                                    tmp_doc = {}
-                                    
-                                    if schema:
-                                        tmp_doc["status"] = "partial_processed"
-                                        tmp_doc["schema"] = schema
-                                    else:
-                                        tmp_doc["status"] = "processed"
-
-                                    col_warc.update_one({ "_id": ObjectId(filename.split("/")[-1].split(".", 1)[0]) }, { "$set": tmp_doc })
-
-                                    updated_count += 1
-
-                                    file = open(f"{dir_o}/{next(range_gen)['filename']}.warc.gz", "wb")
-                                    buffer = new_range
-                                
-                                file.write(buffer)
-                            
-                            except StopIteration:
-                                break
-
-                            except Exception as e:
-                                log.error(e)
-                                break
+                    # log.info(url, ', '.join(byte_ranges_only))
                     
-                        log.info(f"Worker {worker_id} updated {updated_count} documents.")
+                    # async with aio_session.get(url, headers={ "Range": f"bytes={', '.join(byte_ranges_only)}" }, raise_for_status=True) as stream:
+                    #     boundary = "--".encode() + stream.headers["Content-Type"].split("boundary=")[1].encode("utf-8")
 
+                    #     range_gen = range_generator(byte_ranges)
+                    #     file = open(f"{dir_o}/{next(range_gen)['filename']}.warc.gz", "wb")
+                        
+                    #     retry_flag = False
+
+                    #     async for chunk in stream.content.iter_chunked(chunk_size):
+                    #         buffer = chunk
+
+                    #         try:
+                    #             while boundary in buffer:
+                    #                 range_end, buffer = buffer.split(boundary, 1)
+
+                    #                 try:
+                    #                     new_range = buffer.split(b"\r\n\r\n", 1)[1]
+                                    
+                    #                 except:
+                    #                     new_range = buffer
+                                    
+                    #                 filename = file.name
+
+                    #                 file.write(range_end)
+                    #                 file.close()
+
+                    #                 try:
+                    #                     schema = parse_warc(filename)
+                    #                 except:
+                    #                     schema = None
+                    #                     log.error(f"Error parsing {filename}")
+
+                    #                 tmp_doc = {}
+                                    
+                    #                 if schema:
+                    #                     tmp_doc["status"] = "partial_processed"
+                    #                     tmp_doc["schema"] = schema
+                    #                 else:
+                    #                     tmp_doc["status"] = "processed"
+
+                    #                 col_warc.update_one({ "_id": ObjectId(filename.split("/")[-1].split(".", 1)[0]) }, { "$set": tmp_doc })
+
+                    #                 updated_count += 1
+
+                    #                 file = open(f"{dir_o}/{next(range_gen)['filename']}.warc.gz", "wb")
+                    #                 buffer = new_range
+                                
+                    #             file.write(buffer)
+                            
+                    #         except StopIteration:
+                    #             break
+
+                    #         except Exception as e:
+                    #             log.error(e)
+                    #             break
+                    
                 except (aiohttp.ClientResponseError, aiohttp.ClientConnectorError, aiohttp.ServerDisconnectedError) as e:
                     log.error(e)
                     continue
@@ -206,7 +245,7 @@ async def _warc_worker(
             lock.release()
 
     except Exception as e:
-        log.error(e)
+        log.error(e, exc_info=True)
 
     finally:
         await aio_session.close()

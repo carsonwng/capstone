@@ -145,7 +145,7 @@ class ProcessCrawl:
                     "res_url": json_line["url"],
                     "length": int(json_line["length"]),
                     "offset": int(json_line["offset"]),
-                    "range": f"{offset}-{length + offset}",
+                    "range": f"{offset}-{length + offset - 1}",
                     "res_domain": res_domain,
                     "status": "not_processed",
                     "is_recipe": False

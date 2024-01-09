@@ -126,7 +126,7 @@ if not col_crawls.find_one():
 # )
 
 async def main():
-    warc = col_warc.find_one_and_update({ "status": "not_processed" }, { "$set": { "status": "queued" } })
+    # warc = col_warc.find_one_and_update({ "status": "not_processed" }, { "$set": { "status": "queued" } })
 
     w_handler = WorkerHanlder(
         col_crawl=col_crawls,
@@ -137,9 +137,10 @@ async def main():
 
         # n_crawl=5,
         # n_cdx=1,
-        n_warc=5,
-        n_warc_instances=4,
-        n_warc_managers=5 * 2,
+        n_warc=1,
+        # n_warc_instances=8,
+        n_warc_manager=1, # 1/3 of (n_warc * n_warc_instances)
+        n_warc_manager_qsize=5,
         # n_garb=1,
 
         # p_crawl=crawl_processor,
@@ -147,7 +148,7 @@ async def main():
 
         log=log,
         ticker=1,
-        max_q=10,
+        max_q=5000, # (n_warc * n_warc_instances) * 5
 
         mongo_connection_string=mongo_connection_string
     )

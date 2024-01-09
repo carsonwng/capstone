@@ -32,9 +32,10 @@ class WorkerHanlder:
 
             n_crawl = 1,
             n_cdx = 1,
-            n_warc = 5,
-            n_warc_instances = 4,
-            n_warc_managers = 1,
+            n_warc = 1,
+            # n_warc_instances = 4,
+            n_warc_manager = 1,
+            n_warc_manager_qsize = 10,
             n_garb = 1,
 
             p_crawl = None,
@@ -56,9 +57,10 @@ class WorkerHanlder:
         # self.n_crawl: int = n_crawl
         # self.n_cdx: int = n_cdx
         self.n_warc: int = n_warc
-        self.n_warc_instances: int = n_warc_instances
+        # self.n_warc_instances: int = n_warc_instances
 
-        self.n_warc_managers: int = n_warc_managers
+        self.n_warc_manager: int = n_warc_manager
+        self.n_warc_manager_qsize: int = n_warc_manager_qsize
 
         # self.n_garb: int = n_garb
 
@@ -67,6 +69,9 @@ class WorkerHanlder:
 
         self.warc_manager = multiprocessing.Manager()
         self.warc_manager_queue = self.warc_manager.Queue(max_q)
+
+        self.warc_manager_lock = self.warc_manager.Lock()
+        self.warc_manager_count = self.warc_manager.Value("i", 0)
 
         self.warc_lock = self.warc_manager.Lock()
         self.warc_count = self.warc_manager.Value("i", 0)
@@ -122,16 +127,16 @@ class WorkerHanlder:
                             self.warc_lock.release()
                     except:
                         pass
-                    
+
                     return
 
     async def start(self):
-        start_t = time.monotonic()
-
         try:
             self.log.info("Starting Workers... Hold on!")
 
-            for i in range(self.n_warc_managers):
+            start_t = time.monotonic()
+
+            for i in range(self.n_warc_manager):
                 p = Process(target=_start_manager_node, args=(
                     self.log.name,
                     self.mongo_connection_string,
@@ -139,12 +144,16 @@ class WorkerHanlder:
                     self.dir_o,
                     i,
                     self.ticker,
-                    self.chunk_size,
-                    self.killswitch
+                    self.n_warc_manager_qsize,
+                    self.killswitch,
+                    self.warc_manager_lock,
+                    self.warc_manager_count
                 ))
 
                 p.start()
                 self.processes.append(p)
+
+            await asyncio.sleep(10)
 
             for i in range(self.n_warc):
                 p = Process(target=_start_node, args=(
@@ -153,7 +162,7 @@ class WorkerHanlder:
                     self.warc_manager_queue,
                     self.dir_o,
                     i,
-                    self.n_warc_instances,
+                    # self.n_warc_instances,
                     self.ticker,
                     self.chunk_size,
                     self.warc_lock,
@@ -164,19 +173,25 @@ class WorkerHanlder:
                 p.start()
                 self.processes.append(p)
 
+            await asyncio.sleep(self.ticker)
+
             while True:
                 if self.killswitch.is_set():
                     self.log.info("Parent process recieved killswitch!")
                     break
 
                 current_t = time.monotonic()
+                spread_t = round(current_t - start_t, 2)
+
+                self.log.info(f"Warc Manager added {self.warc_manager_count.value} WARCs in {current_t - start_t} seconds. (@ {round(self.warc_manager_count.value / (spread_t), 2)} WARCs/sec)")
+                self.log.info(f"WARC queue is {self.warc_manager_queue.qsize() / self.max_q * 100}% full. ({self.warc_manager_queue.qsize()} / {self.max_q})")
 
                 await asyncio.sleep(self.ticker * 10)
                 
                 used, total, percent = ram_usage()
 
                 self.warc_lock.acquire()
-                self.log.info(f"Processed {self.warc_count.value} WARCs in {current_t - start_t} seconds. (@ {self.warc_count.value / (current_t - start_t)} WARCs/sec)")
+                self.log.info(f"Processed {self.warc_count.value} WARCs in {current_t - start_t} seconds. (@ {round(self.warc_count.value / (spread_t), 2)} WARCs/sec)")
                 self.warc_lock.release()
 
                 self.log.info(f"RAM Usage: {used} MB / {total} MB ({percent}%)")
